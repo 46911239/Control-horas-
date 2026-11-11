@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#173b75">
+  <title>Mis horas</title>
+  <style>
+    :root {
+      --bg: #f4f6fb;
+      --surface: #fff;
+      --text: #192338;
+      --muted: #647087;
+      --line: #e1e6ef;
+      --blue: #2456a6;
+      --red: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 18px 14px calc(28px + env(safe-area-inset-bottom));
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { max-width: 600px; margin: auto; }
+    h1 { margin: 4px 0; font-size: 1.8rem; }
+    h2 { margin: 0 0 14px; font-size: 1.1rem; }
+    p { color: var(--muted); line-height: 1.45; }
+    .panel, .stat {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      margin: 14px 0;
+      box-shadow: 0 5px 18px #17294b0a;
+    }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stat { margin: 0; padding: 13px; }
+    .stat span { display: block; color: var(--muted); font-size: .82rem; }
+    .stat strong { display: block; margin-top: 6px; font-size: 1.3rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    label { display: block; color: var(--muted); font-size: .84rem; font-weight: 650; }
+    input, button {
+      font: inherit;
+      width: 100%;
+      min-height: 46px;
+      border-radius: 11px;
+    }
+    input {
+      margin-top: 6px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      background: white;
+      color: var(--text);
+    }
+    button {
+      border: 0;
+      padding: 11px 14px;
+      color: white;
+      background: var(--blue);
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.delete {
+      width: auto;
+      min-height: 38px;
+      padding: 7px 10px;
+      color: var(--red);
+      background: #fff0ef;
+    }
+    .history-item {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 0;
+      border-top: 1px solid var(--line);
+    }
+    .history-item:first-child { border-top: 0; }
+    .history-copy { min-width: 0; }
+    .history-copy strong { display: block; }
+    .history-copy small { display: block; margin-top: 4px; color: var(--muted); line-height: 1.5; }
+    .empty { color: var(--muted); padding: 10px 0; }
+    .note { font-size: .82rem; margin-bottom: 0; }
+    @media (max-width: 390px) {
+      body { padding-left: 10px; padding-right: 10px; }
+      .panel { padding: 13px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Mis horas</h1>
+    <p>Registra tu jornada y consulta el historial de todos tus días.</p>
+  </header>
+
+  <section class="stats">
+    <div class="stat">
+      <span>Horas trabajadas este mes</span>
+      <strong id="monthTotal">0 h 0 min</strong>
+    </div>
+    <div class="stat">
+      <span>Horas extras este mes</span>
+      <strong id="monthExtra">0 h 0 min</strong>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Registrar jornada</h2>
+    <form id="dayForm">
+      <div class="grid">
+        <label>Fecha
+          <input id="date" type="date" required>
+        </label>
+        <label>Refrigerio
+          <input type="text" value="45 minutos (se descuentan)" disabled>
+        </label>
+        <label>Hora de entrada
+          <input id="start" type="time" required>
+        </label>
+        <label>Hora de salida
+          <input id="end" type="time" required>
+        </label>
+      </div>
+      <p class="note">La jornada normal está configurada en 8 horas. Si eliges una fecha ya registrada, puedes modificar sus horas y guardar los cambios.</p>
+      <p id="preview" class="note"></p>
+      <button type="submit">Guardar jornada</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Historial de todos los días</h2>
+    <div id="history"></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  const STORAGE_KEY = "mis_horas_diarias_v1";
+  const BREAK_MINUTES = 45;
+  const NORMAL_DAY_MINUTES = 8 * 60;
+  const $ = id => document.getElementById(id);
+
+  let days = loadDays();
+
+  function loadDays() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      return Array.isArray(saved) ? saved : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function saveDays() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(days));
+      return true;
+    } catch (error) {
+      alert("No se pudieron guardar los datos en este navegador.");
+      return false;
+    }
+  }
+
+  function todayString() {
+    const d = new Date();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${month}-${day}`;
+  }
+
+  function toMinutes(time) {
+    if (!time) return null;
+    const [hours, minutes] = time.split(":").map(Number);
+    return hours * 60 + minutes;
+  }
+
+  function formatDuration(minutes) {
+    const value = Math.max(0, Math.round(minutes));
+    return `${Math.floor(value / 60)} h ${value % 60} min`;
+  }
+
+  function calculate(day) {
+    let elapsed = toMinutes(day.end) - toMinutes(day.start);
+    if (elapsed < 0) elapsed += 24 * 60;
+    const worked = Math.max(0, elapsed - BREAK_MINUTES);
+    return {
+      worked,
+      regular: Math.min(worked, NORMAL_DAY_MINUTES),
+      extra: Math.max(0, worked - NORMAL_DAY_MINUTES)
+    };
+  }
+
+  function formatDate(dateString) {
+    return new Date(dateString + "T12:00:00").toLocaleDateString("es", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric"
+    });
+  }
+
+  function loadSelectedDay() {
+    const day = days.find(item => item.date === $("date").value);
+    $("start").value = day?.start || "";
+    $("end").value = day?.end || "";
+    updatePreview();
+  }
+
+  function updatePreview() {
+    const start = $("start").value;
+    const end = $("end").value;
+    if (!start || !end || start === end) {
+      $("preview").textContent = "";
+      return;
+    }
+    const result = calculate({ start, end });
+    $("preview").textContent =
+      `Al guardar: ${formatDuration(result.worked)} trabajadas · ` +
+      `${formatDuration(result.regular)} normales · ${formatDuration(result.extra)} extras.`;
+  }
+
+  function render() {
+    const sortedDays = [...days].sort((a, b) => b.date.localeCompare(a.date));
+
+    $("history").innerHTML = sortedDays.length
+      ? sortedDays.map(day => {
+          const totals = calculate(day);
+          return `
+            <div class="history-item">
+              <div class="history-copy">
+                <strong>${formatDate(day.date)}</strong>
+                <small>
+                  Entrada: ${day.start} · Salida: ${day.end}<br>
+                  Refrigerio descontado: 45 min<br>
+                  Trabajadas: ${formatDuration(totals.worked)}<br>
+                  Normales: ${formatDuration(totals.regular)} · Extras: ${formatDuration(totals.extra)}
+                </small>
+              </div>
+              <button class="delete" type="button" data-delete="${day.date}">Eliminar</button>
+            </div>`;
+        }).join("")
+      : '<div class="empty">Todavía no hay jornadas guardadas.</div>';
+
+    $("history").querySelectorAll("[data-delete]").forEach(button => {
+      button.addEventListener("click", () => {
+        const date = button.dataset.delete;
+        if (!confirm("¿Eliminar la jornada de este día?")) return;
+        days = days.filter(day => day.date !== date);
+        if (!saveDays()) return;
+        if ($("date").value === date) loadSelectedDay();
+        render();
+      });
+    });
+
+    const now = new Date();
+    const monthDays = days.filter(day => {
+      const date = new Date(day.date + "T12:00:00");
+      return date.getFullYear() === now.getFullYear() &&
+        date.getMonth() === now.getMonth();
+    });
+
+    const workedThisMonth = monthDays.reduce((sum, day) => sum + calculate(day).worked, 0);
+    const extraThisMonth = monthDays.reduce((sum, day) => sum + calculate(day).extra, 0);
+    $("monthTotal").textContent = formatDuration(workedThisMonth);
+    $("monthExtra").textContent = formatDuration(extraThisMonth);
+  }
+
+  $("date").value = todayString();
+  $("date").addEventListener("change", loadSelectedDay);
+  $("start").addEventListener("input", updatePreview);
+  $("end").addEventListener("input", updatePreview);
+
+  $("dayForm").addEventListener("submit", event => {
+    event.preventDefault();
+
+    const date = $("date").value;
+    const start = $("start").value;
+    const end = $("end").value;
+
+    if (!date || !start || !end || start === end) {
+      alert("Revisa la fecha y las horas de entrada y salida.");
+      return;
+    }
+
+    const record = { date, start, end };
+    const existingIndex = days.findIndex(day => day.date === date);
+
+    if (existingIndex >= 0) {
+      days[existingIndex] = record;
+    } else {
+      days.push(record);
+    }
+
+    if (!saveDays()) return;
+    render();
+    updatePreview();
+    alert(existingIndex >= 0 ? "Jornada actualizada." : "Jornada guardada.");
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
